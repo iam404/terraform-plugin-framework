@@ -1209,3 +1209,19 @@ func TestDataReifyNullCollectionBlocks(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkDataReifyNullCollectionBlocksNestedBlocks(b *testing.B) {
+	ctx := context.Background()
+	data := nestedBlocksData()
+	value := data.TerraformValue
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		data.TerraformValue = value
+
+		if diags := data.ReifyNullCollectionBlocks(ctx); diags.HasError() {
+			b.Fatalf("unexpected diagnostics: %v", diags)
+		}
+	}
+}

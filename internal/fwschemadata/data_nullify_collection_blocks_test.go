@@ -5,6 +5,7 @@ package fwschemadata_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -12,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/internal/fwschema"
 	"github.com/hashicorp/terraform-plugin-framework/internal/fwschemadata"
 	"github.com/hashicorp/terraform-plugin-framework/internal/testing/testschema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
@@ -963,5 +965,79 @@ func TestDataNullifyCollectionBlocks(t *testing.T) {
 				t.Errorf("unexpected difference: %s", diff)
 			}
 		})
+	}
+}
+
+// nestedBlocksFanout describes a schema of list nested blocks shaped like a
+// large real-world schema (for example a Kubernetes pod template): a chain of
+// wrapper blocks followed by a wide tree, 199 blocks over 8 levels.
+var nestedBlocksFanout = []int{1, 1, 1, 4, 3, 3, 2, 1}
+
+// nestedBlocks returns list nested blocks with the given fanout per level, and
+// a value which sets one element in every block, with one known and one null
+// attribute per element.
+func nestedBlocks(fanout []int) (map[string]schema.Block, map[string]tftypes.Type, map[string]tftypes.Value) {
+	blocks := map[string]schema.Block{}
+	types := map[string]tftypes.Type{}
+	values := map[string]tftypes.Value{}
+
+	if len(fanout) == 0 {
+		return blocks, types, values
+	}
+
+	for i := range fanout[0] {
+		name := fmt.Sprintf("block_%d", i)
+		childBlocks, childTypes, childValues := nestedBlocks(fanout[1:])
+
+		blocks[name] = schema.ListNestedBlock{
+			NestedObject: schema.NestedBlockObject{
+				Attributes: map[string]schema.Attribute{
+					"known": schema.StringAttribute{Optional: true},
+					"null":  schema.StringAttribute{Optional: true},
+				},
+				Blocks: childBlocks,
+			},
+		}
+
+		childTypes["known"] = tftypes.String
+		childTypes["null"] = tftypes.String
+		childValues["known"] = tftypes.NewValue(tftypes.String, "value")
+		childValues["null"] = tftypes.NewValue(tftypes.String, nil)
+
+		objectType := tftypes.Object{AttributeTypes: childTypes}
+		listType := tftypes.List{ElementType: objectType}
+
+		types[name] = listType
+		values[name] = tftypes.NewValue(listType, []tftypes.Value{
+			tftypes.NewValue(objectType, childValues),
+		})
+	}
+
+	return blocks, types, values
+}
+
+func nestedBlocksData() *fwschemadata.Data {
+	blocks, types, values := nestedBlocks(nestedBlocksFanout)
+
+	return &fwschemadata.Data{
+		Description:    fwschemadata.DataDescriptionConfiguration,
+		Schema:         schema.Schema{Blocks: blocks},
+		TerraformValue: tftypes.NewValue(tftypes.Object{AttributeTypes: types}, values),
+	}
+}
+
+func BenchmarkDataNullifyCollectionBlocksNestedBlocks(b *testing.B) {
+	ctx := context.Background()
+	data := nestedBlocksData()
+	value := data.TerraformValue
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		data.TerraformValue = value
+
+		if diags := data.NullifyCollectionBlocks(ctx); diags.HasError() {
+			b.Fatalf("unexpected diagnostics: %v", diags)
+		}
 	}
 }
