@@ -172,7 +172,7 @@ func (e Expression) Equal(o Expression) bool {
 // relative expression steps, such as ExpressionStepParent, are automatically
 // resolved before matching.
 func (e Expression) Matches(path Path) bool {
-	return e.steps.Matches(path.Steps())
+	return e.steps.Matches(path.steps)
 }
 
 // MatchesParent returns true if the given Path is a valid parent for the
@@ -181,7 +181,7 @@ func (e Expression) Matches(path Path) bool {
 // relative expression steps, such as ExpressionStepParent, are automatically
 // resolved before matching.
 func (e Expression) MatchesParent(path Path) bool {
-	return e.steps.MatchesParent(path.Steps())
+	return e.steps.MatchesParent(path.steps)
 }
 
 // Merge returns a copied expression either with the steps of the given

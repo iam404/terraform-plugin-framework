@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/internal/fwschema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -15,6 +16,83 @@ import (
 
 // AttributePath returns the path.Path equivalent of a *tftypes.AttributePath.
 func AttributePath(ctx context.Context, tfType *tftypes.AttributePath, schema fwschema.Schema) (path.Path, diag.Diagnostics) {
+	if fwPath, ok := attributePathSingleWalk(ctx, tfType, schema); ok {
+		return fwPath, nil
+	}
+
+	return attributePathPerPrefix(ctx, tfType, schema)
+}
+
+// attributePathSingleWalk converts the path while walking the schema once.
+// The framework type of a step is only needed for set element steps, so it is
+// not resolved for other steps. Resolving the type of a block rebuilds the
+// type of all of its nested blocks, which made the conversion of every path
+// prefix expensive for deeply nested block schemas.
+//
+// It returns false when the path cannot be converted this way, in which case
+// attributePathPerPrefix produces the result and any diagnostics.
+func attributePathSingleWalk(ctx context.Context, tfType *tftypes.AttributePath, schema fwschema.Schema) (path.Path, bool) {
+	fwPath := path.Empty()
+	steps := tfType.Steps()
+
+	var current any = schema
+
+	for stepIndex, step := range steps {
+		stepper, ok := current.(tftypes.AttributePathStepper)
+
+		if !ok {
+			return path.Empty(), false
+		}
+
+		next, err := stepper.ApplyTerraform5AttributePathStep(step)
+
+		if err != nil {
+			return path.Empty(), false
+		}
+
+		// Only continue with the schema elements which
+		// fwschema.SchemaTypeAtTerraformPath can resolve a type for.
+		switch next.(type) {
+		case attr.Type, fwschema.Attribute, fwschema.Block, fwschema.NestedAttributeObject,
+			fwschema.NestedBlockObject, fwschema.UnderlyingAttributes:
+		default:
+			return path.Empty(), false
+		}
+
+		current = next
+
+		switch step := step.(type) {
+		case tftypes.AttributeName:
+			fwPath = fwPath.AtName(string(step))
+		case tftypes.ElementKeyInt:
+			fwPath = fwPath.AtListIndex(int(step))
+		case tftypes.ElementKeyString:
+			fwPath = fwPath.AtMapKey(string(step))
+		case tftypes.ElementKeyValue:
+			attrType, err := schema.TypeAtTerraformPath(ctx, tftypes.NewAttributePathWithSteps(steps[:stepIndex+1]))
+
+			if err != nil {
+				return path.Empty(), false
+			}
+
+			attrValue, err := Value(ctx, tftypes.Value(step), attrType)
+
+			if err != nil {
+				return path.Empty(), false
+			}
+
+			fwPath = fwPath.AtSetValue(attrValue)
+		default:
+			return path.Empty(), false
+		}
+	}
+
+	return fwPath, true
+}
+
+// attributePathPerPrefix converts the path by resolving the framework type of
+// every path prefix.
+func attributePathPerPrefix(ctx context.Context, tfType *tftypes.AttributePath, schema fwschema.Schema) (path.Path, diag.Diagnostics) {
 	fwPath := path.Empty()
 
 	for tfTypeStepIndex, tfTypeStep := range tfType.Steps() {

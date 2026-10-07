@@ -67,7 +67,7 @@ func (s ExpressionSteps) LastStep() (ExpressionStep, ExpressionSteps) {
 //
 // Any ExpressionStepParent will automatically be resolved.
 func (s ExpressionSteps) Matches(pathSteps PathSteps) bool {
-	resolvedExpressionSteps := s.Resolve()
+	resolvedExpressionSteps := s.resolvedForMatch()
 
 	// Empty expression should not match anything to prevent false positives.
 	if len(resolvedExpressionSteps) == 0 {
@@ -94,7 +94,7 @@ func (s ExpressionSteps) Matches(pathSteps PathSteps) bool {
 //
 // Any ExpressionStepParent will automatically be resolved.
 func (s ExpressionSteps) MatchesParent(pathSteps PathSteps) bool {
-	resolvedExpressionSteps := s.Resolve()
+	resolvedExpressionSteps := s.resolvedForMatch()
 
 	// Empty expression should not match anything to prevent false positives.
 	// Ensure to not return false on an empty path since walking a path always
@@ -166,6 +166,18 @@ func (s ExpressionSteps) Resolve() ExpressionSteps {
 	}
 
 	return result
+}
+
+// resolvedForMatch returns the result of Resolve, without copying when there
+// is no ExpressionStepParent to resolve. The result must not be modified.
+func (s ExpressionSteps) resolvedForMatch() ExpressionSteps {
+	for _, step := range s {
+		if _, ok := step.(ExpressionStepParent); ok {
+			return s.Resolve()
+		}
+	}
+
+	return s
 }
 
 // String returns the human-readable representation of the ExpressionSteps.
